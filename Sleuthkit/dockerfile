@@ -1,0 +1,61 @@
+FROM debian:buster AS build
+
+ARG SLEUTHKIT_VERSION=4.10
+ARG SLEUTHKIT_BASE_URL=https://github.com/sleuthkit/sleuthkit/archive
+
+# Installing deps
+RUN  echo "deb http://deb.debian.org/debian buster-backports main" >> /etc/apt/sources.list \
+	&& apt-get update \
+	&& apt-get install -y --no-install-recommends \
+		build-essential \
+		automake \
+		autoconf \
+		libtool \
+		libafflib-dev \
+		zlib1g-dev \
+		libewf-dev \
+		libvhdi-dev \
+		libvmdk-dev \
+		openjdk-11-jdk-headless \
+		curl \
+		unzip \
+		checkinstall \
+	&& cd /tmp/ \
+	&& apt-get download ant && dpkg-deb -x ant*.deb / \
+	&& rm ant*.deb
+
+COPY ./build_java_bindings.xml /tmp
+
+# Building sleuthkit
+RUN mkdir -p /tmp/sleuthkit \
+	&& cd /tmp/sleuthkit \
+	&& curl -sSL -o /tmp/sleuthkit/sleuthkit-source.tar.gz ${SLEUTHKIT_BASE_URL}/sleuthkit-${SLEUTHKIT_VERSION}.tar.gz \
+	&& tar xzf sleuthkit-source.tar.gz --strip 1 \
+	&& cp /tmp/build_java_bindings.xml /tmp/sleuthkit/bindings/java/build.xml \
+	&& ./bootstrap \
+	&& ./configure \
+	&& make \
+	&& checkinstall --install=no --default --fstrans=no --nodoc --exclude=/proc \
+	&& mkdir /sleuthkit \
+	&& cp *.deb /sleuthkit/sleuthkit.deb \
+	&& cp /tmp/sleuthkit/bindings/java/dist/*.jar /sleuthkit/sleuthkit-${SLEUTHKIT_VERSION}.jar
+
+FROM debian:buster
+
+RUN apt-get update \
+	&& apt-get install -y --no-install-recommends \
+		libafflib0v5 \
+		zlib1g \
+		libewf2 \
+		libvhdi1 \
+		libvmdk1
+
+COPY --from=build /sleuthkit/* /sleuthkit/
+
+RUN dpkg -i /sleuthkit/sleuthkit.deb && \
+    rm /sleuthkit/sleuthkit.deb
+
+# Cleaning image.
+RUN  apt-get clean  \
+	&& rm -rf /var/lib/apt/lists/* \
+	&& apt-get autoremove -y
